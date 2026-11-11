@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-label="gemini2api">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/><stop offset="60%" stop-color="#111d33"/><stop offset="100%" stop-color="#0a1626"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.12" cy="0.1" r="0.75">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.55"/><stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M0 34 L34 34 L34 0" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="320" rx="18" fill="url(#bg)"/>
+  <rect width="1200" height="320" rx="18" fill="url(#grid)"/>
+  <rect width="1200" height="320" rx="18" fill="url(#glow)"/>
+  <rect x="1" y="1" width="1198" height="318" rx="17" fill="none" stroke="#06b6d4" stroke-opacity="0.45" stroke-width="2"/>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif">
+    <text x="60" y="118" font-size="52" font-weight="700" fill="#ffffff" letter-spacing="0.5">gemini2api</text>
+    <text x="60" y="186" font-size="23" fill="#9fb3c8">用浏览器 Cookie 把 Google Gemini 包装成兼容 OpenAI / Claude / Gemini SDK 的标准 API，</text><text x="60" y="222" font-size="23" fill="#9fb3c8">带管理面板与多账号轮询。Fork 自 xwteam/gemini2api</text>
+    <g><rect x="60" y="258" width="154" height="38" rx="19.0" fill="#ffffff" fill-opacity="0.10" stroke="#06b6d4" stroke-opacity="0.55"/><text x="82" y="283" font-size="19" fill="#e2e8f0">Gemini API</text></g><g><rect x="227.63000000000002" y="258" width="139" height="38" rx="19.0" fill="#ffffff" fill-opacity="0.10" stroke="#06b6d4" stroke-opacity="0.55"/><text x="249.63000000000002" y="283" font-size="19" fill="#e2e8f0">多账号轮询</text></g><g><rect x="380.63" y="258" width="120" height="38" rx="19.0" fill="#ffffff" fill-opacity="0.10" stroke="#06b6d4" stroke-opacity="0.55"/><text x="402.63" y="283" font-size="19" fill="#e2e8f0">管理面板</text></g>
+  </g>
+  <text x="1160" y="286" font-size="16" fill="#64748b" text-anchor="end" font-family="system-ui, sans-serif">aiwozhonghua81 / gemini2api</text>
+</svg>
