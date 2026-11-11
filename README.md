@@ -1,3 +1,499 @@
+<!-- 中文说明开始 -->
+# 📖 中文详细说明（gemini2api）
+
+> **阅读顺序说明**：本文件最上面这一大段是**中文详细说明**，是用大白话写给第一次接触这个项目的人看的；下面从 `---` 之后开始，是**上游项目原封不动的英文/中文 README**，完整保留，没有删改任何一句。
+>
+> 只想看官方原始文档，可以直接跳到下半部分。
+
+---
+
+## 1️⃣ 这是什么？
+
+一句话说清楚：**把 Google Gemini 网页版"翻译"成一个普通 API 服务器**。
+
+打个比方：你现在能用的 Gemini 是打开浏览器登录 `gemini.google.com` 跟它聊天。这个项目做的事情是——在你的电脑上跑一个小服务器，你手里的 AI 客户端（Cursor、Cherry Studio、Claude Code、或者任何一个支持 OpenAI 格式的工具）不再去连 OpenAI，而是连你的这个服务器，服务器再拿你的 Gemini 账号 Cookie 去替你跟 Gemini 对话，然后把答案转成客户端认识的格式返回。
+
+| 关键点 | 说明 |
+|--------|------|
+| **不需要官方 API Key** | 只要你有一个能正常用 Gemini 的 Google 账号，拿到浏览器 Cookie 就能跑 |
+| **三大协议通吃** | 同一个服务同时提供 OpenAI 格式、Claude（Anthropic）格式、Gemini 原生格式，换客户端不用重写 |
+| **流式输出** | 打字机效果，Claude Code / Codex 这类工具靠它才能正常用 |
+| **带管理面板** | 浏览器打开就能看账号状态、改配置、看日志，不用背命令 |
+| **一次部署，多账号轮询** | 可以挂多个 Google 账号，自动轮着来，一个挂了自动换下一个 |
+| **技术栈** | Python 3.12 + FastAPI + curl_cffi（伪装成 Chrome 浏览器发请求） |
+| **当前版本** | v1.6.40 |
+| **默认端口** | `5918` |
+
+⚠️ **一句话风险提示**：这个项目靠逆向工程模拟浏览器访问 Google，官方明确说过这可能违反 Google 服务条款。**只用于个人学习和研究，不要商用，账号被封的风险自己扛。** 详情看下半部分的免责声明。
+
+---
+
+## 2️⃣ 适合谁用？能解决什么问题？
+
+### ✅ 典型使用者
+
+| 你是谁 | 你会得到什么 |
+|--------|-------------|
+| **个人开发者 / 学生** | 不用花钱买 API Key，用自己已有的 Gemini 订阅跑 AI 编程、写文档 |
+| **AI 应用开发者** | 想在自己的项目里接 Gemini，但不想申请官方 API、也不想绑卡 |
+| **多账号持有者** | 手上有几个 Google 账号，需要负载均衡，避免单个账号被打爆 |
+| **Claude Code / Codex 用户** | 这两个工具只认 Claude / OpenAI 协议，本项目可以让它们背后跑 Gemini |
+| **想折腾 Web 面板的人** | 想要一个可视化界面管账号、看日志、切模型，不想跟 yaml 文件较劲 |
+
+### 🎯 它能帮你解决的具体麻烦
+
+1. **「Gemini 网页版太好了，但我怎么让工具调用它？」**
+   → 这就是本项目的核心用途。工具说 OpenAI 协议，服务器转成 Gemini 协议再发出去。
+
+2. **「官方的 Gemini API 要绑卡，我嫌麻烦 / 没外币卡。」**
+   → 用你自己的账号 Cookie 就能跑，不需要走支付。
+
+3. **「一个账号同时被好几个工具用，很快就触发限流。」**
+   → 挂多个账号，设成轮询（round-robin）或故障转移（failover），还能给每个账号设单独的并发上限。
+
+4. **「我 6 个 Claude Code 终端同时开着，谁在干什么我完全不知道。」**
+   → 面板里能看到每个账号的存活状态、连续失败次数、最近一次成功时间。
+
+5. **「Gemini 报错的时候前端只显示『无响应内容』，我根本不知道哪错了。」**
+   → v1.6.40 起，面板会显示真实的 HTTP 状态码和脱敏后的错误原因，503 / 529 / 500 / 400 一眼区分。
+
+### ❌ 不适合谁
+
+- 打算**商用收费**的（许可证是非商业许可，见下半部分「许可协议」）
+- 需要**绝对稳定**的（Google 风控会不定时让 Cookie 失效）
+- 身处**无法直连 `gemini.google.com`** 的网络环境且没配代理的
+- 期待**无限速**的（Google 侧始终有频率限制，关掉内置限流也没用）
+
+---
+
+## 3️⃣ 核心功能
+
+| # | 功能 | 用大白话说 |
+|---|------|-----------|
+| 1 | **三协议合一** | 一个接口同时按 OpenAI、Claude、Gemini 三种格式对外服务，客户端随便换 |
+| 2 | **流式输出** | 答案一个字一个字往外蹦（`stream: true`），长回答体验不卡死 |
+| 3 | **函数调用 / 工具调用** | 三种协议下都支持，让 AI 调用你的函数（比如查天气） |
+| 4 | **多账号负载均衡** | 多个 Google 账号轮着用，支持 round-robin 轮询和 failover 故障转移两种策略 |
+| 5 | **每账号并发上限** | 单个账号最多同时处理 N 个请求（默认 8），防止被压垮 |
+| 6 | **Cookie 自动续期** | 后台定时调 Google 的接口刷新 `__Secure-1PSIDTS`，尽量不让会话过期 |
+| 7 | **Cookie 热更新** | 不用重启容器，API 或面板一键换新 Cookie |
+| 8 | **浏览器指纹伪装** | 用 curl_cffi 模拟 Chrome 的 TLS 握手（就是网络层面假装自己是 Chrome），UA 和请求头版本号严格同步 |
+| 9 | **Web 管理面板** | 中文界面，仪表盘看运行状态、账号管理增删改、模型映射、API Key 管理、Playground 在线试、实时日志 |
+| 10 | **API Key 管理** | 集中管理第三方的 OpenAI / Anthropic / Gemini / OpenRouter Key，支持导入导出、批量操作 |
+| 11 | **统一转发引擎** | 请求的模型 Gemini 不支持？自动从 Key 池里找第三方模型转发过去 |
+| 12 | **第三方兜底** | Gemini 报错或返回空时，自动换池子里的第三方模型重试，客户端完全无感 |
+| 13 | **用量统计** | 累计请求数、错误率、延迟、轮换成功率，存 30 天 |
+| 14 | **Deep Research** | `/gemini/v1beta/deepresearch` 端点，支持同步、流式、异步任务三种模式 |
+| 15 | **AI 生图** | 对话里说"画图"就能出图，也有 `/v1/images/generations` 标准接口返回 base64 |
+| 16 | **模型名映射** | 客户端写 `gpt-4o`，服务器实际调 `gemini-2.5-pro`，改个配置就行 |
+| 17 | **思考过程流式** | Gemini 的"思考内容"逐帧流出，先于答案显示，带打字机效果 |
+| 18 | **网页会话自动清理** | 定时删掉 Gemini 网页端堆积的旧会话（置顶的保留），避免越堆越多 |
+
+---
+
+## 4️⃣ 怎么快速上手？
+
+> ⚠️ 下面的命令全部是从本仓库的真实文件里读出来的（`docker-compose.yml`、`.env.example`、`Dockerfile`、`requirements.txt`），不是编的。
+
+### 前置条件
+
+| 依赖 | 版本 | 必需？ |
+|------|------|--------|
+| Docker | 20.10+ | ✅ 推荐（用 Docker 就不用装 Python） |
+| Python | 3.12+ | ❌ 只有不用 Docker 时才需要 |
+| Google 账号 | — | ✅ 需能正常访问 [gemini.google.com](https://gemini.google.com) |
+| Chrome / Edge 浏览器 | 最新版 | ✅ 仅首次取 Cookie 时需要 |
+
+### 第 1 步：拿 Cookie
+
+Cookie 就是你登录 Gemini 网页版的"通行证"，两个就够：
+
+| Cookie 名字 | 长什么样 | 在哪找 |
+|-------------|---------|--------|
+| `__Secure-1PSID` | 以 `g.` 开头的超长字符串 | F12 → Application → Cookies → `https://gemini.google.com` |
+| `__Secure-1PSIDTS` | 较短的字符串 | 同上 |
+
+操作步骤：
+
+1. Chrome / Edge 打开 [gemini.google.com](https://gemini.google.com)，登录，确认能正常对话
+2. 按 `F12` 打开开发者工具
+3. 点顶部的 **Application**（应用程序）标签
+4. 左侧 **Cookies** → 点 `https://gemini.google.com`
+5. 搜索框输入 `__Secure-1P` 快速过滤
+6. 双击 Value 列复制 `__Secure-1PSID` 和 `__Secure-1PSIDTS` 的完整值
+
+> 💡 建议开**无痕模式**操作，拿到值立刻关窗口，避免页面刷新导致 Cookie 轮换。
+> 💡 复制时**不要加引号、不要留空格、不要漏末尾字符**。
+
+### 第 2 步：Docker 部署（推荐）
+
+```bash
+# 1. 拉代码
+git clone https://github.com/aiwozhonghua81/gemini2api.git
+cd gemini2api
+
+# 2. 造一份配置文件
+cp .env.example .env
+
+# 3. 编辑 .env，填你的两个 Cookie
+```
+
+`.env` 里至少要改这两行：
+
+```env
+GEMINI_PSID=g.a000xxx...（粘贴你的 __Secure-1PSID 完整值）
+GEMINI_PSIDTS=sidts-xxx...（粘贴你的 __Secure-1PSIDTS 完整值）
+```
+
+```bash
+# 4. 启动
+docker compose up -d
+
+# 5. 看日志确认成功
+docker compose logs -f
+```
+
+日志里看到这两行就算成了：
+
+| 日志关键字 | 意思 |
+|-----------|------|
+| `Account pool ready: 1/1 active` | ✅ 账号池就绪 |
+| `SNlM0e not found` | ❌ Cookie 无效，回去重拿 |
+
+### 第 3 步：验证
+
+```bash
+# 健康检查
+curl http://localhost:5918/health
+# 期望输出：{"status":"ok","service":"gemini2api"}
+
+# 看有哪些模型能用（要带 API Key）
+curl http://localhost:5918/openai/v1/models \
+  -H "Authorization: Bearer sk-你的API密钥"
+
+# 发一条真实请求
+curl -X POST http://localhost:5918/openai/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-你的API密钥" \
+  -d '{"model":"gemini-2.0-flash","messages":[{"role":"user","content":"用三句话解释相对论"}]}'
+```
+
+看到 AI 回的字就成功了。返回 401 说明 API Key 不对。
+
+### 打开管理面板
+
+浏览器访问 `http://localhost:5918`，用日志里那个 `sk-` 开头的 Key 登录。
+
+### 多账号配置（可选）
+
+想要负载均衡就建 `accounts.json`（参考仓库里的 `accounts.json.example`）：
+
+```json
+{
+  "accounts": [
+    {
+      "id": "account-0",
+      "psid": "g.a000xxx...",
+      "psidts": "sidts-xxx...",
+      "label": "主账号"
+    },
+    {
+      "id": "account-1",
+      "psid": "g.a000yyy...",
+      "psidts": "sidts-yyy...",
+      "label": "备用账号"
+    }
+  ]
+}
+```
+
+不建这个文件也能用——服务会自动退回读 `.env` 里的单账号模式。
+
+### 不用 Docker 的本地跑法
+
+```bash
+# 1. 装依赖
+pip install -r requirements.txt
+
+# 2. 配环境变量
+cp .env.example .env
+# 编辑 .env 填 Cookie
+
+# 3. 启动（Dockerfile 里用的是这条命令）
+python -m uvicorn app.main:app --host 0.0.0.0 --port 5918
+```
+
+### 启用 Cookie 自动保活（可选，需要真实 Chromium）
+
+`docker-compose.yml` 里带了一个叫 `refresher` 的可选服务，用真实 Chromium 定时访问 Gemini 触发前端 JS 续期 `__Secure-1PSIDTS`，再热更新回主服务：
+
+```bash
+docker compose --profile refresher up -d
+```
+
+> 默认**不会**随 `docker compose up` 启动，需要时显式加 `--profile refresher`。
+
+### 接进客户端
+
+<details>
+<summary><b>OpenAI SDK（Python）</b></summary>
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-你的API密钥",
+    base_url="http://localhost:5918/openai/v1"
+)
+
+for chunk in client.chat.completions.create(
+    model="gemini-2.0-flash",
+    messages=[{"role": "user", "content": "用三句话解释相对论"}],
+    stream=True
+):
+    print(chunk.choices[0].delta.content or "", end="")
+```
+
+</details>
+
+<details>
+<summary><b>Claude SDK（Python）</b></summary>
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    api_key="sk-你的API密钥",
+    base_url="http://localhost:5918/claude"
+)
+
+msg = client.messages.create(
+    model="gemini-2.0-flash",
+    max_tokens=4096,
+    messages=[{"role": "user", "content": "写一个快速排序的Python实现"}]
+)
+print(msg.content[0].text)
+```
+
+</details>
+
+<details>
+<summary><b>生图</b></summary>
+
+```bash
+# 方式一：对话里说"画图"，回复直接带图片 URL
+curl -X POST http://localhost:5918/v1/chat/completions \
+  -H "Authorization: Bearer sk-你的API密钥" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini-pro","messages":[{"role":"user","content":"generate an image of a cute cat"}]}'
+
+# 方式二：标准图片接口，返回 b64_json
+curl -X POST http://localhost:5918/v1/images/generations \
+  -H "Authorization: Bearer sk-你的API密钥" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini-pro","prompt":"a cute cat","n":1}'
+```
+
+</details>
+
+---
+
+## 5️⃣ 常见问题 / 注意事项
+
+### ❓ 启动或使用时会踩的坑
+
+| 现象 | 原因 | 怎么办 |
+|------|------|--------|
+| **改了 `.env` 重启却不生效** | 面板里改过的项存在 `data/settings-overrides.json`，**优先级高于环境变量**，把你的 `.env` 覆盖了 | 看启动日志里 `Applied N panel setting override(s)` 这行，删掉 `data/settings-overrides.json` 就能把控制权交回 `.env` |
+| **Cookie 用一会儿就失效（常见约 2 小时）** | Google 风控策略限制数据中心 IP 的会话寿命 | 换住宅 IP；加账号数量轮询；或用配套的 `refresher` 服务 / 浏览器插件 |
+| **账号池卡死，报 `All accounts busy`** | 老版本会话失效的账号会让每个请求空等 60 秒 | v1.6.37 起已修：立即返回准确的 503 并自动尝试重载 Cookie 自愈。确认版本 ≥ 1.6.37 |
+| **模型测试页只显示"无响应内容"，看不出真实错误** | 流式失败只能以流内 error 帧表达，前端不认识这个键 | v1.6.40 已修：显示真实原因和状态码。确认版本 ≥ 1.6.40 |
+| **返回 401** | API Key 不对 | 首次启动会**自动生成** `sk-` 开头的 Key 并写进 `.env`，去 `.env` 里复制；也可以面板 `/admin/verify` 验证 |
+| **`/v1/models` 报 404** | 路径写错了 | OpenAI 格式是 `/openai/v1/models`（或裸 `/v1/models`）；Claude 格式的 models 只在 `/claude/v1/models` |
+| **curl 请求 429 / 529** | 触发限流或账号池满 | 529 = 池满，等一会儿或加账号；429 = 你自己撞上了 `RATE_LIMIT_*` 或 Key 级并发上限 |
+| **Claude Code 接不上** | v1.6.33 之前 `tool_use` / `tool_result` 块会被丢弃，`system` 数组会 422 | 升到 **≥ 1.6.33**；用 `/claude/v1/messages`，base_url 填 `http://localhost:5918/claude` |
+| **长回答被中途掐断** | 跨境链路或网关空闲超时 | 四条流式接口已内置保活心跳（v1.6.31+）。仍断就调大客户端/反向代理的首字节超时 |
+| **容器起不来报权限错** | `data/` 目录属主不对 | 镜像已用 `docker-entrypoint.sh` 自动 `chown` 修复。若你显式设了 `user:`，属主要自己保证 |
+| **忘了密码 / 登不进面板** | API Key 泄露或丢失 | 改 `.env` 里的 `API_KEY`，删掉 `data/settings-overrides.json` 里的旧值，重启 |
+
+### ⚠️ 必须知道的注意事项
+
+1. **Cookie 等于账号钥匙** —— 别把 `.env` 提交到 git，别贴到聊天窗口或 issue 里。本仓库 `.gitignore` 已经默认忽略 `.env`。
+2. **Google 侧永远有限流** —— 关掉 `RATE_LIMIT_ENABLED=false` 只是关掉本项目自己的限流，Google 那边的频率限制还在，猛刷可能触发验证码或临时封号。
+3. **服务器要能直连 `gemini.google.com`** —— 部分地区需要配代理。
+4. **许可证是"非商业"** —— 个人学习、自用部署可以；卖钱、集成进商业产品不行。见下半部分 LICENSE。
+5. **不保证 SLA** —— 这是个人维护的开源项目，作者明确说过不对账号封禁或数据丢失负责。
+6. **面板设置优先于环境变量** —— 这条最容易懵，具体解释见上面表格第一行。
+
+---
+
+## 6️⃣ 目录结构速览
+
+```
+gemini2api/
+├── app/                          ← Python 后端主代码
+│   ├── main.py                   # 应用入口，注册中间件
+│   ├── config.py                 # 配置读取（基于 Pydantic）
+│   ├── core/                     # 核心业务逻辑
+│   │   ├── gemini_client.py      # Gemini 网页版核心客户端
+│   │   ├── account_pool.py       # 多账号池（负载均衡 + 运行时切换策略）
+│   │   ├── auth.py               # API Key 校验
+│   │   ├── api_key_store.py      # 第三方 API Key 存储池
+│   │   ├── api_forwarder.py      # 统一转发引擎（Gemini 不支持时转第三方）
+│   │   ├── fallback.py           # 第三方兜底逻辑
+│   │   ├── model_mapping.py      # 模型别名 → 实际模型名
+│   │   ├── stream.py             # 流式输出工具函数
+│   │   ├── settings_overrides.py # 面板设置的落盘与回放（优先级高于 env）
+│   │   ├── usage_stats.py        # 用量统计
+│   │   ├── log_store.py          # 结构化日志存储
+│   │   └── fingerprint/          # 反检测 & 协议伪装
+│   │       ├── config.py         # 指纹配置加载/保存/热更新
+│   │       ├── header_builder.py # 动态请求头构建（模拟 Chrome 顺序）
+│   │       ├── cookie_jar.py     # 完整 Cookie 持久化（跨重启保留）
+│   │       ├── version_sync.py   # Chrome 版本每 24 小时自动同步
+│   │       └── jitter.py         # 请求时间抖动（模拟人类操作间隔）
+│   ├── models/                   # 请求/响应数据结构定义
+│   │   ├── openai.py             # OpenAI 格式的字段
+│   │   ├── claude.py             # Anthropic 格式的字段
+│   │   └── gemini.py             # Gemini 原生格式的字段
+│   ├── routers/                  # API 路由（每种协议一个文件）
+│   │   ├── openai.py             # /openai/v1/chat/completions 等
+│   │   ├── claude.py             # /claude/v1/messages 等
+│   │   ├── gemini.py             # /gemini/v1beta/models/... 等
+│   │   ├── responses.py          # OpenAI Responses API
+│   │   ├── research.py           # Deep Research 深度研究
+│   │   ├── admin.py              # /admin 管理接口
+│   │   ├── settings.py           # 面板设置管理
+│   │   ├── api_keys.py           # 第三方 Key 管理
+│   │   ├── model_mapping.py      # 模型映射管理
+│   │   ├── logs.py               # 日志查询
+│   │   ├── gems.py               # 自定义 Gemini Gem
+│   │   └── usage_stats.py        # 用量统计接口
+│   └── utils/                    # 杂项工具
+│       ├── tools.py              # 函数调用（工具调用）桥接
+│       ├── prompt.py             # 消息格式化
+│       └── atomic_io.py          # 原子写文件（写盘失败不损坏原文件）
+├── static/                       ← Web 管理面板前端（原生 HTML/JS/CSS）
+│   ├── index.html                # 主页面（单页应用）
+│   ├── login.html                # 登录页
+│   ├── app/                      # 面板 JS 模块（app.js / logs.js / settings.js ...）
+│   └── components/               # 面板 HTML 片段 + 样式
+├── data/                         ← 运行时数据（Docker 卷挂载，会真实存在）
+│   ├── fingerprint.json          # 浏览器指纹配置（自动生成）
+│   ├── api-keys.json             # 第三方 API Key 存储
+│   ├── model-mapping.json        # 模型映射配置
+│   ├── settings-overrides.json   # 面板改过的设置（优先级高于 .env）
+│   ├── usage-stats.json          # 用量统计快照
+│   └── cookies/                  # Cookie 持久化目录
+├── api/                          ← 热更新资源（改完刷新页面即生效）
+│   ├── qr-config.json            # 二维码卡片文字配置
+│   ├── wechat-qr.png             # 微信二维码
+│   └── sponsor-qr.png            # 赞助二维码
+├── refresher/                    ← 可选：真实 Chromium Cookie 保活服务
+│   ├── refresher.py              # 保活逻辑
+│   └── Dockerfile                # 独立镜像
+├── tests/                        ← pytest 测试（单元 + 冒烟）
+├── docs/                         ← 五国语言文档
+│   ├── zh-CN/  zh-TW/            # 简体中文 / 繁體中文
+│   ├── en/  ja/  ko/             # 英文 / 日文 / 韩文
+│   └── logo.png
+├── .github/workflows/            ← CI 与镜像自动发布
+├── Dockerfile                    ← 多阶段构建，非 root 运行
+├── docker-compose.yml            ← 主服务 + refresher（profile 可选）
+├── docker-entrypoint.sh          ← 入口脚本（修卷属主后降权到非 root）
+├── accounts.json.example         ← 多账号配置示例
+├── .env.example                  ← 环境变量模板（65 行，每项都有中文注释）
+├── requirements.txt              ← Python 依赖（fastapi / uvicorn / curl_cffi ...）
+├── pyproject.toml                # pytest + ruff 配置（无运行时作用）
+├── CHANGELOG.md                  # 完整更新日志
+├── VERSION                       # 版本号（1.6.40）
+└── LICENSE                       # 非商业许可
+```
+
+### 常用 API 端点速查
+
+| 用途 | 路径 |
+|------|------|
+| OpenAI 兼容 | `/openai/v1/chat/completions`、`/openai/v1/models`、`/openai/v1/responses`、`/openai/v1/images/generations` |
+| Claude 兼容 | `/claude/v1/messages`、`/claude/v1/messages/count_tokens`、`/claude/v1/models` |
+| Gemini 原生 | `/gemini/v1beta/models/{model}:generateContent`、`/gemini/v1beta/models/{model}:streamGenerateContent` |
+| 深度研究 | `/gemini/v1beta/deepresearch/`、`/stream`、`/interact` |
+| 管理面板后端 | `/admin/accounts`、`/admin/settings`、`/admin/api-keys`、`/admin/logs`、`/admin/model-mapping` |
+| 健康检查 | `/health` |
+
+> 每家接口都同时提供「带前缀」和「裸路径」两种写法，官方 SDK 填 `base_url` 时用裸路径最省事。
+
+---
+
+## 7️⃣ 本仓库说明（Fork 信息）
+
+| 项目 | 说明 |
+|------|------|
+| **本仓库** | `aiwozhonghua81/gemini2api` |
+| **上游项目** | [`xwteam/gemini2api`](https://github.com/xwteam/gemini2api) |
+| **项目名** | Gemini2API |
+| **关系** | **Fork（派生仓库）** —— 本仓库是上游项目的镜像/副本 |
+| **当前分支** | `main` |
+| **当前版本** | v1.6.40 |
+| **上游原始作者** | xwteam（全部提交作者均为 xwteam，本 fork 未做代码改动） |
+
+### 关于这个 fork 的现状（实测数据）
+
+用 `git rev-list --left-right --count upstream/main...main` 对比本地 `main` 与上游 `main`：
+
+```
+126    0
+ ↑      ↑
+上游多  本地多
+126 个  本地 0 个
+```
+
+意思是：**本地分支落后上游 126 个提交，本地没有自己的独占提交**。也就是说：
+
+- ✅ 本 fork 目前是上游的**纯镜像**，代码和上游一模一样，没有私自改过的逻辑
+- ✅ 本 fork 唯一的改动是**在这个 README 顶部加了这一段中文详细说明**（以及仓库 description 里加了中文注解）
+- ⚠️ 如果你要用最新功能，请以**上游仓库**为准，本 fork 还没同步这 126 个提交
+
+### 上游项目简介
+
+> **Gemini2API** 是一套轻量级的 Gemini Web 反向代理：一套代码同时兼容 OpenAI / Claude / Gemini 三大主流 AI SDK，纯异步架构（Python asyncio + curl_cffi），不需要官方 API Key，Docker 一条命令快速部署。
+>
+> 上游文档有五种语言：简体中文、繁體中文、English、日本語、한국어。
+
+### 本 README 的结构
+
+```
+第 1 行
+├── <!-- 中文说明开始 -->
+│   ├── 1️⃣ 这是什么？
+│   ├── 2️⃣ 适合谁用 / 能解决什么问题
+│   ├── 3️⃣ 核心功能
+│   ├── 4️⃣ 怎么快速上手
+│   ├── 5️⃣ 常见问题 / 注意事项
+│   ├── 6️⃣ 目录结构速览
+│   └── 7️⃣ 本仓库说明（Fork 信息）  ← 你正在看的最后一段
+├── <!-- 中文说明结束 -->
+│
+├── （分隔线）
+│
+└── ↑↑↑ 从这里开始，是上游项目 xwteam/gemini2api 的原始 README，一字未改 ↑↑↑
+```
+
+上游 README 里还有更详细的 **API 文档**（`docs/zh-CN/API.md`）、**部署文档**（`docs/zh-CN/DEPLOY.md`）、**使用文档**（`docs/zh-CN/USAGE.md`）和**完整更新日志**（`CHANGELOG.md`），本 fork 一并保留。
+
+### 使用与授权提醒
+
+- 上游采用 **非商业许可（Non-Commercial）**：个人学习、研究、自用部署可以，任何形式的商业用途都不行
+- 上游要求**署名**：使用其名称、思路、代码或提示词时须注明来源
+- 本 fork 只加中文说明，**不改变上游任何代码、许可证和免责声明**
+- 使用前请务必读完下半部分的「⚠️ 免责声明」和「📄 许可协议」
+
+---
+
+<!-- 中文说明结束 -->
+
+---
+
 <div align="center">
 
 <img src="docs/logo.png" width="128" height="128" alt="Gemini2API">
